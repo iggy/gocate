@@ -8,7 +8,7 @@ import (
 	"log"
 	"os"
 	"strings"
-	// "crypto/md5"
+
 	"encoding/hex"
 	"path/filepath"
 
@@ -67,14 +67,12 @@ func updatedb(ctx *ql.TCtx, path string, hh hash.Hash, db *ql.DB) {
 	}
 
 	walkErr := filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
-		// log.Println(path)
 		if err != nil {
 			log.Println("failed filepath.Walk function", err)
 			return err
 		}
 
 		if info.IsDir() {
-			// log.Println("skipping", info.Name(), path)
 			return nil
 		}
 
@@ -99,10 +97,8 @@ func updatedb(ctx *ql.TCtx, path string, hh hash.Hash, db *ql.DB) {
 		if err != nil {
 			log.Println("Failed fetching firstrow", err)
 		}
-		// log.Println("resultset", rs[0], fr)
 		if len(fr) == 0 {
 			// no record, insert data into DB
-			// log.Println("Inserting")
 			_, _, exErr := db.Execute(ctx, ins, path, info.Size(), info.ModTime(), hashHex)
 			if exErr != nil {
 				log.Println("Failed to db.Execute", exErr)
@@ -110,10 +106,7 @@ func updatedb(ctx *ql.TCtx, path string, hh hash.Hash, db *ql.DB) {
 		}
 		if len(fr) != 0 {
 			if fr[3] != hashHex {
-				// log.Println("match", fr[3], hashHex)
-
 				// mismatched hashes, update data in DB
-				// log.Println("Updating", path, fr[3], hashHex)
 				_, _, exErr := db.Execute(ctx, upd, path, info.Size(), info.ModTime(), hashHex)
 				if exErr != nil {
 					log.Println("Failed to db.Execute", exErr)
@@ -133,7 +126,6 @@ func updatedb(ctx *ql.TCtx, path string, hh hash.Hash, db *ql.DB) {
 // TODO:
 // 		 Figure out how to get the list of duplicates directly from SQL if possible
 func printDuplicates(ctx *ql.TCtx, db *ql.DB) {
-
 	sel, compileErr := ql.Compile(`SELECT filename, hash from files;`)
 	if compileErr != nil {
 		log.Println("Failed to compile select", compileErr)
@@ -142,15 +134,11 @@ func printDuplicates(ctx *ql.TCtx, db *ql.DB) {
 	if selErr != nil {
 		log.Println("Select failed", selErr)
 	}
-	// log.Println("resultset", rs)
 	hashMap := make(map[string][]string)
 	for _, r := range rs {
-
-		// log.Println(r)
 		if err := r.Do(false, func(data []interface{}) (bool, error) {
 			filename := data[0].(string)
 			hhash := data[1].(string)
-			// log.Println(data, filename, hhash)
 			if hashMap[hhash] == nil {
 				hashMap[hhash] = make([]string, 0)
 			}
@@ -160,21 +148,15 @@ func printDuplicates(ctx *ql.TCtx, db *ql.DB) {
 			log.Fatalln(err)
 		}
 	}
-	// for hhash, filelist := range hashMap {
 	for _, filelist := range hashMap {
-		// log.Printf("filelist: %+v (%d)", filelist, len(filelist))
 		if len(filelist) > 1 {
-			// log.Println("hhash:filelist", hhash, filelist)
 			fmt.Println(strings.Join(filelist, " "))
 		}
 	}
-	// log.Println(hashMap)
-
 }
 
 // printDB - print the entire ql DB contents
 func printDB(ctx *ql.TCtx, db *ql.DB) {
-
 	rss, _, selErr := db.Run(ctx, "SELECT * FROM files;")
 	if selErr != nil {
 		log.Println("Select failed", selErr)
@@ -193,8 +175,6 @@ func printDB(ctx *ql.TCtx, db *ql.DB) {
 }
 
 func searchDB(ctx *ql.TCtx, db *ql.DB, search string) {
-	// log.Println("search pattern: ", search)
-
 	rss, _, selErr := db.Run(ctx, "SELECT * FROM files WHERE filename LIKE $1;", search)
 	if selErr != nil {
 		log.Println("Select failed", selErr)
@@ -221,7 +201,6 @@ func main() {
 	flag.Parse()
 
 	// ensure needed paths exist
-	// log.Printf("Creating gocate dir if necessary (%v)\n", *gocateDir)
 	if err := os.MkdirAll(*gocateDir, 0775); err != nil {
 		log.Println("Failed to create dir:", &gocateDir, err)
 	}
