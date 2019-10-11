@@ -1,5 +1,8 @@
 name: Go
-on: [push]
+on:
+  push:
+    branches:
+      - master
 jobs:
 
   build:
@@ -25,7 +28,11 @@ jobs:
         fi
 
     - name: Build
-      run: go build -o gocate -v ./cmd/gocate
+      run: go build -o /tmp/gocate -v ./cmd/gocate
+
+    - name: Build info
+      run: |
+        file /tmp/gocate
 
     - name: Create Release
       id: create_release
@@ -44,7 +51,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps 
-        asset_path: ./gocate
+        upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+        asset_path: /tmp/gocate
         asset_name: gocate
         asset_content_type: application/octet-stream
