@@ -33,7 +33,6 @@ jobs:
     - name: Build info
       run: |
         file /tmp/gocate
-        echo "${{ toJSON(github) }}"
 
     - name: Create Release
       id: create_release
@@ -41,7 +40,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${{ github.sha }}
+        tag_name: ${{ github.sha || null }}
         release_name: Release ${{ github.sha }}
         draft: false
         prerelease: false
