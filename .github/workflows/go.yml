@@ -33,7 +33,7 @@ jobs:
     - name: Build info
       run: |
         file /tmp/gocate
-        echo ${{ toJSON(github) }}
+        echo "${{ toJSON(github) }}"
 
     - name: Create Release
       id: create_release
