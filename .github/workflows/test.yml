@@ -29,8 +29,8 @@ jobs:
     - name: go test
       run: go test ./cmd/gocate
 
-    - name: gocyclo
-      run: gocyclo ./cmd/gocate
-
-    - name: golangci-lint
-      run: golangci-lint run ./cmd/gocate
+    # - name: gocyclo
+    #   run: gocyclo ./cmd/gocate
+    #
+    # - name: golangci-lint
+    #   run: golangci-lint run ./cmd/gocate
