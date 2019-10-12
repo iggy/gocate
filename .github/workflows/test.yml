@@ -20,7 +20,7 @@ jobs:
     - name: Get test dependencies
       id: get-test-deps
       run: |
-        go get -v -t ./...
+        go get -v -t -d ./...
         go get -v -t -u golang.org/x/lint/golint \
         	honnef.co/go/tools/cmd/staticcheck \
           github.com/golangci/golangci-lint/cmd/golangci-lint \
