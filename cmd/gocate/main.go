@@ -234,15 +234,15 @@ func main() {
 		log.Panicln("Failed to create HighwayHash instance:", hashErr) // add error handling
 	}
 
-	if *updatedbFlag == true {
+	if *updatedbFlag {
 		updatedb(ctx, searchPath, hh, db)
 	}
 
-	if *printDupes == true {
+	if *printDupes {
 		printDuplicates(ctx, db)
 	}
 
-	if *stats == true {
+	if *stats {
 		printStats(ctx, db)
 	}
 
@@ -251,6 +251,7 @@ func main() {
 		searchDB(ctx, db, search)
 	}
 
-	// printDB(ctx, db)
-
+	if false {
+		printDB(ctx, db)
+	}
 }
