@@ -44,7 +44,7 @@ jobs:
 
     - name: Release gocate
       id: release
-      uses: actions/upload-release-asset@v1.0.0
+      uses: actions/upload-release-asset@v1.0.2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
