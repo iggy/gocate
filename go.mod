@@ -10,7 +10,7 @@ require (
 require (
 	github.com/edsrzf/mmap-go v1.1.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
-	golang.org/x/sys v0.0.0-20211216021012-1d35b9e2eb4e // indirect
+	golang.org/x/sys v0.0.0-20220811171246-fbc7d0a398ab // indirect
 	modernc.org/b v1.0.3 // indirect
 	modernc.org/db v1.0.4 // indirect
 	modernc.org/file v1.0.4 // indirect

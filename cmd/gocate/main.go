@@ -28,14 +28,76 @@ var updatePath = flag.String("path", ".", "Path to walk and update")
 var printDupes = flag.Bool("dupes", false, "Print duplicate files based on hash")
 var stats = flag.Bool("stats", false, "Print DB stats")
 
+// These all get used in the walkFunc, but we need to init them outside that function
+var walkInsertQuery ql.List
+var walkSelectQuery ql.List
+var walkUpdateQuery ql.List
+var walkHash hash.Hash
+var walkDB *ql.DB
+var walkCtx *ql.TCtx
+
+func walkFunc(path string, info os.FileInfo, err error) error {
+	if err != nil {
+		log.Println("failed filepath.Walk function", err)
+		return err
+	}
+
+	if info.IsDir() {
+		return nil
+	}
+
+	file, ferr := os.Open(path)
+	if ferr != nil {
+		log.Println("Error opening: ", ferr, path)
+	}
+	defer file.Close()
+
+	if _, copyErr := io.Copy(walkHash, file); copyErr != nil {
+		log.Println("Error hashing", copyErr)
+		return copyErr
+	}
+	hashInBytes := walkHash.Sum(nil)
+	hashHex := hex.EncodeToString(hashInBytes)
+
+	rs, _, selErr := walkDB.Execute(walkCtx, walkSelectQuery, path)
+	if selErr != nil {
+		log.Println("Select failed", selErr)
+	}
+	fr, err := rs[0].FirstRow()
+	if err != nil {
+		log.Println("Failed fetching firstrow", err)
+	}
+	if len(fr) == 0 {
+		// no record, insert data into DB
+		_, _, exErr := walkDB.Execute(walkCtx, walkInsertQuery, path, info.Size(), info.ModTime(), hashHex)
+		if exErr != nil {
+			log.Println("Failed to db.Execute", exErr)
+		}
+	}
+	if len(fr) != 0 {
+		if fr[3] != hashHex {
+			// mismatched hashes, update data in DB
+			_, _, exErr := walkDB.Execute(walkCtx, walkUpdateQuery, path, info.Size(), info.ModTime(), hashHex)
+			if exErr != nil {
+				log.Println("Failed to db.Execute", exErr)
+			}
+		}
+
+	}
+
+	return nil
+
+}
+
 // updatedb - Update the files DB by walking the path specified
 // TODO:
-// 		 Do hashing/db update in goroutines per CPU?
-//   	 BEGIN/COMMIT outside of the loop?
+// * Do hashing/db update in goroutines per CPU?
+// * BEGIN/COMMIT outside of the loop?
 func updatedb(ctx *ql.TCtx, path string, hh hash.Hash, db *ql.DB) {
 
 	// precompile the INSERT command
-	ins, compileErr := ql.Compile(`
+	var compileErr error
+	walkInsertQuery, compileErr = ql.Compile(`
 		BEGIN TRANSACTION;
 			INSERT INTO files VALUES($1, $2, $3, $4);
 		COMMIT;
@@ -45,7 +107,7 @@ func updatedb(ctx *ql.TCtx, path string, hh hash.Hash, db *ql.DB) {
 	}
 
 	// precompile SELECT command
-	sel, compileErr := ql.Compile(`
+	walkSelectQuery, compileErr = ql.Compile(`
 		SELECT * FROM files WHERE filename == $1
 	`)
 	if compileErr != nil {
@@ -53,7 +115,7 @@ func updatedb(ctx *ql.TCtx, path string, hh hash.Hash, db *ql.DB) {
 	}
 
 	// precompile the UPDATE command
-	upd, compileErr := ql.Compile(`
+	walkUpdateQuery, compileErr = ql.Compile(`
 		BEGIN TRANSACTION;
 			UPDATE files
 				size = $2,
@@ -66,57 +128,7 @@ func updatedb(ctx *ql.TCtx, path string, hh hash.Hash, db *ql.DB) {
 		log.Println("Failed to compile select", compileErr)
 	}
 
-	walkErr := filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			log.Println("failed filepath.Walk function", err)
-			return err
-		}
-
-		if info.IsDir() {
-			return nil
-		}
-
-		file, ferr := os.Open(path)
-		if ferr != nil {
-			log.Println("Error opening: ", ferr, path)
-		}
-		defer file.Close()
-
-		if _, copyErr := io.Copy(hh, file); copyErr != nil {
-			log.Println("Error hashing", copyErr)
-			return copyErr
-		}
-		hashInBytes := hh.Sum(nil)
-		hashHex := hex.EncodeToString(hashInBytes)
-
-		rs, _, selErr := db.Execute(ctx, sel, path)
-		if selErr != nil {
-			log.Println("Select failed", selErr)
-		}
-		fr, err := rs[0].FirstRow()
-		if err != nil {
-			log.Println("Failed fetching firstrow", err)
-		}
-		if len(fr) == 0 {
-			// no record, insert data into DB
-			_, _, exErr := db.Execute(ctx, ins, path, info.Size(), info.ModTime(), hashHex)
-			if exErr != nil {
-				log.Println("Failed to db.Execute", exErr)
-			}
-		}
-		if len(fr) != 0 {
-			if fr[3] != hashHex {
-				// mismatched hashes, update data in DB
-				_, _, exErr := db.Execute(ctx, upd, path, info.Size(), info.ModTime(), hashHex)
-				if exErr != nil {
-					log.Println("Failed to db.Execute", exErr)
-				}
-			}
-
-		}
-
-		return nil
-	})
+	walkErr := filepath.Walk(path, walkFunc)
 	if walkErr != nil && walkErr != filepath.SkipDir {
 		log.Println("error walking", walkErr)
 	}
@@ -124,7 +136,7 @@ func updatedb(ctx *ql.TCtx, path string, hh hash.Hash, db *ql.DB) {
 
 // printDuplicates - Print out filenames line by line of duplicate files (based on hash value in DB)
 // TODO:
-// 		 Figure out how to get the list of duplicates directly from SQL if possible
+// * Figure out how to get the list of duplicates directly from SQL if possible
 func printDuplicates(ctx *ql.TCtx, db *ql.DB) {
 	sel, compileErr := ql.Compile(`SELECT filename, hash from files;`)
 	if compileErr != nil {
@@ -191,7 +203,10 @@ func searchDB(ctx *ql.TCtx, db *ql.DB, search string) {
 }
 
 func printStats(ctx *ql.TCtx, db *ql.DB) {
-	stats, _ := db.Info()
+	stats, err := db.Info()
+	if err != nil {
+		log.Println("failed to get db info")
+	}
 	log.Println(stats)
 }
 
@@ -222,7 +237,10 @@ func main() {
 		log.Fatalln(err)
 	}
 
-	searchPath, _ := filepath.Abs(*updatePath)
+	searchPath, err := filepath.Abs(*updatePath)
+	if err != nil {
+		log.Fatalln("failed to get update path absolute path")
+	}
 
 	// Create highwayhash instance
 	key, decodeErr := hex.DecodeString("9d6a5ccfe55ce0fa167002bd76b6409d66e4cfec57d1827e802ca2f5f6a3")

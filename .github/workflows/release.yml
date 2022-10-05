@@ -1,55 +1,54 @@
+---
 name: Build-Release
-on:
+"on":
   push:
     tags:
       - v*
 
 jobs:
-
   build:
     name: Build
     runs-on: ubuntu-latest
     steps:
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: 1.18
+        id: go
 
-    - name: Set up Go
-      uses: actions/setup-go@v3
-      with:
-        go-version: 1.18
-      id: go
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v3
 
-    - name: Check out code into the Go module directory
-      uses: actions/checkout@v3
+      - name: Get build-release dependencies
+        run: |
+          go get -v -t -d ./...
 
-    - name: Get build-release dependencies
-      run: |
-        go get -v -t -d ./...
+      - name: Build
+        run: go build -o /tmp/gocate -v ./cmd/gocate
 
-    - name: Build
-      run: go build -o /tmp/gocate -v ./cmd/gocate
+      - name: Build info
+        run: |
+          file /tmp/gocate
 
-    - name: Build info
-      run: |
-        file /tmp/gocate
+      # TODO both of these actions are deprecated
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1.1.4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.sha || null }}
+          release_name: Release ${{ github.sha }}
+          draft: false
+          prerelease: false
 
-    # TODO both of these actions are deprecated
-    - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1.1.4
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ github.sha || null }}
-        release_name: Release ${{ github.sha }}
-        draft: false
-        prerelease: false
-
-    - name: Release gocate
-      id: release
-      uses: actions/upload-release-asset@v1.0.2
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
-        asset_path: /tmp/gocate
-        asset_name: gocate
-        asset_content_type: application/octet-stream
+      - name: Release gocate
+        id: release
+        uses: actions/upload-release-asset@v1.0.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
+          asset_path: /tmp/gocate
+          asset_name: gocate
+          asset_content_type: application/octet-stream
