@@ -1,7 +1,7 @@
 ---
 name: Test
 "on": [push]
-
+permissions: read-all
 jobs:
   test:
     name: Test on push
