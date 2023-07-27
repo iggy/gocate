@@ -10,6 +10,8 @@ name: "CodeQL"
   schedule:
     - cron: "29 1 * * 4"
 
+permissions: read-all
+
 jobs:
   analyze:
     name: Analyze
