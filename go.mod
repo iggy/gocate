@@ -1,6 +1,6 @@
 module github.com/iggy/gocate
 
-go 1.18
+go 1.22
 
 require (
 	github.com/minio/highwayhash v1.0.3
