@@ -1,10 +1,11 @@
 module github.com/iggy/gocate
 
 go 1.22
+toolchain go1.24.1
 
 require (
 	github.com/minio/highwayhash v1.0.3
-	modernc.org/ql v1.4.11
+	modernc.org/ql v1.4.12
 )
 
 require (
@@ -13,7 +14,7 @@ require (
 	golang.org/x/sys v0.28.0 // indirect
 	modernc.org/b v1.1.0 // indirect
 	modernc.org/db v1.0.13 // indirect
-	modernc.org/file v1.0.9 // indirect
+	modernc.org/file v1.0.10 // indirect
 	modernc.org/fileutil v1.3.0 // indirect
 	modernc.org/golex v1.1.0 // indirect
 	modernc.org/internal v1.1.1 // indirect
