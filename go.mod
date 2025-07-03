@@ -4,7 +4,7 @@ go 1.23
 
 require (
 	github.com/minio/highwayhash v1.0.3
-	modernc.org/ql v1.4.15
+	modernc.org/ql v1.4.16
 )
 
 require (
@@ -13,7 +13,7 @@ require (
 	golang.org/x/sys v0.28.0 // indirect
 	modernc.org/b v1.1.0 // indirect
 	modernc.org/db v1.0.15 // indirect
-	modernc.org/file v1.0.11 // indirect
+	modernc.org/file v1.0.12 // indirect
 	modernc.org/fileutil v1.3.3 // indirect
 	modernc.org/golex v1.1.0 // indirect
 	modernc.org/internal v1.1.3 // indirect
