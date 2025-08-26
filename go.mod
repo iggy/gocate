@@ -4,7 +4,7 @@ go 1.23
 
 require (
 	github.com/minio/highwayhash v1.0.3
-	modernc.org/ql v1.4.15
+	modernc.org/ql v1.4.22
 )
 
 require (
@@ -12,11 +12,11 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	golang.org/x/sys v0.28.0 // indirect
 	modernc.org/b v1.1.0 // indirect
-	modernc.org/db v1.0.15 // indirect
-	modernc.org/file v1.0.11 // indirect
-	modernc.org/fileutil v1.3.3 // indirect
+	modernc.org/db v1.0.20 // indirect
+	modernc.org/file v1.0.14 // indirect
+	modernc.org/fileutil v1.3.20 // indirect
 	modernc.org/golex v1.1.0 // indirect
-	modernc.org/internal v1.1.3 // indirect
+	modernc.org/internal v1.1.6 // indirect
 	modernc.org/lldb v1.0.8 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/sortutil v1.1.1 // indirect
