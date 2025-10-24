@@ -5,22 +5,16 @@ go 1.23.0
 toolchain go1.24.1
 
 require (
-	github.com/kalafut/imohash v1.1.0
-	github.com/rs/zerolog v1.34.0
-	github.com/zeebo/xxh3 v1.0.2
-	modernc.org/ql v1.4.27
+	github.com/minio/highwayhash v1.0.3
+	modernc.org/ql v1.4.28
 )
 
 require (
 	github.com/edsrzf/mmap-go v1.2.0 // indirect
-	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
-	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/twmb/murmur3 v1.1.5 // indirect
 	golang.org/x/sys v0.31.0 // indirect
 	modernc.org/b v1.1.0 // indirect
-	modernc.org/db v1.0.27 // indirect
+	modernc.org/db v1.0.28 // indirect
 	modernc.org/file v1.0.18 // indirect
 	modernc.org/fileutil v1.3.40 // indirect
 	modernc.org/golex v1.1.0 // indirect
