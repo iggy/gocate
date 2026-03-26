@@ -8,13 +8,13 @@
 
 ## Usage
 
-#### Update gocate database starting at /
+### Update gocate database starting at /
 `gocate -updatedb -path /`
 
-#### Find files ending with certain characters
+### Find files ending with certain characters
 `gocate .md$`
 
-#### Other
+### Other
 `gocate -updatedb -path /media/movies`
 
 `gocate -updatedb -path ~/Music`

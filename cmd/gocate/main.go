@@ -240,14 +240,7 @@ func printDB() {
 	}
 
 	fmt.Println("----")
-	for _, rs := range rss {
-		if err := rs.Do(false, func(data []interface{}) (bool, error) {
-			fmt.Println(data)
-			return true, nil
-		}); err != nil {
-			log.Fatal().Err(err).Msg("printDB: Failed fetching rows")
-		}
-	}
+	printRows(rss)
 	fmt.Println("----")
 }
 
@@ -258,12 +251,17 @@ func searchDB(search string) {
 		log.Error().Err(err).Msg("Select failed")
 	}
 
-	for _, rs := range searchResult {
+	printRows(searchResult)
+}
+
+// printRows iterates over result sets and prints each row
+func printRows(rss []ql.Recordset) {
+	for _, rs := range rss {
 		if err := rs.Do(false, func(data []interface{}) (bool, error) {
 			fmt.Println(data)
 			return true, nil
 		}); err != nil {
-			log.Fatal().Err(err).Msg("searchDB: Failed fetching rows")
+			log.Error().Err(err).Msg("Failed fetching rows")
 		}
 	}
 }
@@ -277,6 +275,13 @@ func printStats() {
 }
 
 func main() {
+	if err := run(); err != nil {
+		log.Error().Err(err).Msg("Fatal error")
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout})
 	zerolog.SetGlobalLevel(zerolog.WarnLevel)
 	// log.Println("gocate... a fancy locate replacement written in Go")
@@ -288,7 +293,7 @@ func main() {
 	if *profile {
 		f, err := os.Create("default.pgo")
 		if err != nil {
-			log.Fatal().Err(err).Msg("could not create CPU profile: ")
+			return fmt.Errorf("could not create CPU profile: %w", err)
 		}
 		defer func() {
 			if err := f.Close(); err != nil {
@@ -311,7 +316,7 @@ func main() {
 	dbFile := filepath.Join(*gocateDir, "files.db")
 	fdb, err = ql.OpenFile(dbFile, &ql.Options{CanCreate: true, FileFormat: 2})
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to open DB")
+		return fmt.Errorf("failed to open DB: %w", err)
 	}
 
 	// Setup tables for storing file data
@@ -329,12 +334,12 @@ func main() {
 	COMMIT;`)
 	// ALTER TABLE files ADD xxh3hash string;
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to create table")
+		return fmt.Errorf("failed to create table: %w", err)
 	}
 
 	searchPath, err := filepath.Abs(*updatePath)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Failed to get update path absolute path")
+		return fmt.Errorf("failed to get update path absolute path: %w", err)
 	}
 
 	// Create highwayhash instance
@@ -410,4 +415,6 @@ func main() {
 	if false {
 		printDB()
 	}
+
+	return nil
 }
