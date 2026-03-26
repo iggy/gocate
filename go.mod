@@ -7,13 +7,13 @@ toolchain go1.24.1
 require (
 	github.com/kalafut/imohash v1.1.1
 	github.com/rs/zerolog v1.34.0
-	github.com/zeebo/xxh3 v1.0.2
+	github.com/zeebo/xxh3 v1.1.0
 	modernc.org/ql v1.4.31
 )
 
 require (
 	github.com/edsrzf/mmap-go v1.2.0 // indirect
-	github.com/klauspost/cpuid/v2 v2.0.9 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
