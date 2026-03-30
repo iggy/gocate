@@ -6,7 +6,7 @@ toolchain go1.24.1
 
 require (
 	github.com/kalafut/imohash v1.1.1
-	github.com/rs/zerolog v1.34.0
+	github.com/rs/zerolog v1.35.0
 	github.com/zeebo/xxh3 v1.1.0
 	modernc.org/ql v1.4.31
 )
