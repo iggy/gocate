@@ -1,420 +1,193 @@
+// Command gocate is a locate replacement: it walks a filesystem tree, stores
+// file metadata and content hashes in an embedded SQL database, and searches
+// files by name or lists duplicates by content hash.
 package main
 
 import (
 	"flag"
 	"fmt"
-	"io/fs"
 	"os"
-	"strings"
-	"sync"
-	"time"
-
 	"path/filepath"
 	"runtime/pprof"
+	"strings"
 
-	"github.com/kalafut/imohash"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/zeebo/xxh3"
-	"modernc.org/ql"
+
+	"github.com/iggy/gocate/internal/index"
+	"github.com/iggy/gocate/internal/store"
 )
 
-// TODO
-//   - https://godoc.org/github.com/rjeczalik/notify
-//   - debug output
-//   - finish stats output
-//   - prune - remove old entries from DB
-//   - something to skip hashing
-//   - store multiple hashes i.e. imohash (can have collisions) and xxHash (no collisions)
-//   - add a "deleted" flag to the DB
-//   - don't hash 0 byte files
-
-// cli flags
-var updatedbFlag = flag.Bool("updatedb", false, "Update the database")
-var gocateDir = flag.String("config", filepath.Join(os.Getenv("HOME"), ".gocate"), "Directory to store config and file DB")
-var updatePath = flag.String("path", ".", "Path to walk and update")
-var printDupes = flag.Bool("dupes", false, "Print duplicate files based on hash")
-var stats = flag.Bool("stats", false, "Print DB stats")
-var quick = flag.Bool("quick", false, "quick update (don't hash files that are in the database already)")
-var noHash = flag.Bool("no-hash", false, "don't hash files, just add them to the database")
-var hostname = flag.String("hostname", "", "custom hostname to use for the database")
-var profile = flag.Bool("profile", false, "generate profile data")
-
-// These all get used in the walkFunc, but we need to init them outside that function
-var walkInsertQuery ql.List
-var walkSelectQuery ql.List
-var walkUpdateQuery ql.List
-
-// var hHash hash.Hash
-var fdb *ql.DB
-var dbCtx *ql.TCtx
-var worker chan fileInfo
-var walkerDone chan bool
-var wg sync.WaitGroup // Add WaitGroup to track goroutines
-
-type fileInfo struct {
-	Path     string
-	Size     int64
-	ModTime  time.Time
-	Imohash  string // the main file hash... if there are collisions, we use xxh3
-	XXH3Hash string // a fast hash that has no collisions
-}
-
-func hasher(worker chan<- fileInfo, file *fileInfo) {
-	defer wg.Done()
-	log.Trace().Interface("file", file).Msg("hasher started")
-
-	f, err := os.Open(file.Path)
-	if err != nil {
-		log.Error().Err(err).Str("path", file.Path).Msg("failed to open dirent")
-	}
-	defer func() {
-		if err := f.Close(); err != nil {
-			log.Error().Err(err).Str("path", file.Path).Msg("failed to close file")
-		}
-	}()
-	log.Trace().Str("path", file.Path).Msg("opened dirent")
-
-	// Calculate imohash
-	data, err := os.ReadFile(file.Path)
-	if err != nil {
-		log.Error().Err(err).Str("path", file.Path).Msg("failed to read file")
-		return
-	}
-	imo := imohash.Sum(data)
-	file.Imohash = fmt.Sprintf("%x", imo)
-
-	// Calculate xxh3 hash
-	xxh3Hash := xxh3.Hash(data)
-	file.XXH3Hash = fmt.Sprintf("%x", xxh3Hash)
-
-	log.Trace().Interface("file", file).Msg("hasher result")
-	worker <- *file
-}
-
-func walkFunc(path string, info os.FileInfo, err error) error {
-	log.Trace().Str("path", path).Bool("isdir", info.IsDir()).Int64("size", info.Size()).Msg("walkFunc file")
-	if err != nil {
-		log.Error().Err(err).Msg("failed filepath.Walk function")
-		return err
-	}
-
-	lt := info.Mode().Type()
-	if lt == fs.ModeDir ||
-		lt == fs.ModeSymlink ||
-		lt == fs.ModeSocket ||
-		lt == fs.ModeDevice ||
-		lt == fs.ModeNamedPipe ||
-		lt == fs.ModeCharDevice ||
-		lt == fs.ModeIrregular ||
-		*quick ||
-		!*noHash {
-		fi := fileInfo{Path: path, Size: info.Size(), ModTime: info.ModTime()}
-		log.Trace().Interface("fileinfo", fi).Msg("sending non-regular file to worker channel")
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			worker <- fi
-		}()
-	} else {
-		fi := fileInfo{
-			Path:    path,
-			Size:    info.Size(),
-			ModTime: info.ModTime(),
-		}
-		log.Trace().Interface("fileInfo", fi).Str("path", path).Msg("sending to worker")
-		wg.Add(1)
-		go hasher(worker, &fi)
-	}
-
-	return nil
-}
-
-// updatedb - Update the files DB by walking the path specified
-// TODO:
-//   - Do hashing/db update in goroutines per CPU?
-//   - BEGIN/COMMIT outside of the loop?
-//   - split entering hostname/size/timestamp from hashing
-func updatedb(path string) {
-	var hn string
-	var err error
-	if *hostname != "" {
-		hn = *hostname
-	} else {
-		hn, err = os.Hostname()
-		if err != nil {
-			log.Error().Err(err).Msg("failed to get hostname")
-			hn = "unknown"
-		}
-	}
-	// precompile the INSERT command
-	// TODO: batch insert?
-	walkInsertQuery, err = ql.Compile(fmt.Sprintf(`
-		BEGIN TRANSACTION;
-			INSERT INTO files VALUES("%s", $1, $2, $3, $4, $5);
-		COMMIT;
-	`, hn))
-	if err != nil {
-		log.Error().Err(err).Msg("failed to compile insert")
-	}
-
-	// precompile SELECT command
-	walkSelectQuery, err = ql.Compile(fmt.Sprintf(`
-		SELECT * FROM files WHERE hostname == "%s" && filename == $1
-	`, hn))
-	if err != nil {
-		log.Error().Err(err).Msg("failed to compile select")
-	}
-
-	// precompile the UPDATE command
-	updateQuery := fmt.Sprintf(`
-		BEGIN TRANSACTION;
-			UPDATE files SET
-				hostname = "%s",
-				size = $2,
-				modtimestamp = $3,
-				imohash = $4,
-				xxh3hash = $5
-			WHERE filename = $1;
-		COMMIT;
-	`, hn)
-	walkUpdateQuery, err = ql.Compile(updateQuery)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to compile update")
-	}
-
-	// setup context
-	dbCtx = ql.NewRWCtx()
-
-	walkErr := filepath.Walk(path, walkFunc)
-	log.Trace().Msg("updatedb walker done")
-	if walkErr != nil && walkErr != filepath.SkipDir {
-		log.Error().Err(walkErr).Msg("failed to walk path")
-	}
-
-	// Wait for all goroutines to finish
-	wg.Wait()
-	walkerDone <- true
-	// Don't close the worker channel here - let the main loop handle it
-}
-
-// printDuplicates - Print out filenames line by line of duplicate files (based on hash value in DB)
-// TODO:
-// * Figure out how to get the list of duplicates directly from SQL if possible
-func printDuplicates() {
-	sel, err := ql.Compile(`SELECT filename, imohash, xxh3hash from files;`)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to compile select")
-	}
-	rs, _, selErr := fdb.Execute(dbCtx, sel)
-	if selErr != nil {
-		log.Error().Err(selErr).Msg("Select failed")
-	}
-	hashMap := make(map[string][]string)
-	for _, r := range rs {
-		if err := r.Do(false, func(data []interface{}) (bool, error) {
-			filename := data[0].(string)
-			// Use xxh3hash as the key since it has no collisions
-			hhash := data[2].(string)
-			if hashMap[hhash] == nil {
-				hashMap[hhash] = make([]string, 0)
-			}
-			hashMap[hhash] = append(hashMap[hhash], filename)
-			return true, nil
-		}); err != nil {
-			log.Fatal().Err(err).Msg("Failed fetching rows")
-		}
-	}
-	for _, filelist := range hashMap {
-		if len(filelist) > 1 {
-			fmt.Println(strings.Join(filelist, " "))
-		}
-	}
-}
-
-// printDB - print the entire ql DB contents
-func printDB() {
-	rss, _, selErr := fdb.Run(dbCtx, "SELECT * FROM files;")
-	if selErr != nil {
-		log.Error().Err(selErr).Msg("Select failed")
-	}
-
-	fmt.Println("----")
-	printRows(rss)
-	fmt.Println("----")
-}
-
-// TODO this should only open the DB in read-only mode
-func searchDB(search string) {
-	searchResult, _, err := fdb.Run(dbCtx, "SELECT * FROM files WHERE filename LIKE $1;", search)
-	if err != nil {
-		log.Error().Err(err).Msg("Select failed")
-	}
-
-	printRows(searchResult)
-}
-
-// printRows iterates over result sets and prints each row
-func printRows(rss []ql.Recordset) {
-	for _, rs := range rss {
-		if err := rs.Do(false, func(data []interface{}) (bool, error) {
-			fmt.Println(data)
-			return true, nil
-		}); err != nil {
-			log.Error().Err(err).Msg("Failed fetching rows")
-		}
-	}
-}
-
-func printStats() {
-	stats, err := fdb.Info()
-	if err != nil {
-		log.Error().Err(err).Msg("failed to get db info")
-	}
-	fmt.Println(stats.Name, stats.Tables)
-}
+var (
+	updatedbFlag = flag.Bool("updatedb", false, "update the database")
+	configDir    = flag.String("config", filepath.Join(os.Getenv("HOME"), ".gocate"), "directory to store the file DB")
+	updatePath   = flag.String("path", ".", "path to walk and index (with -updatedb)")
+	printDupes   = flag.Bool("dupes", false, "print groups of duplicate files (by content hash)")
+	dupesScript  = flag.Bool("dupes-script", false, "like -dupes but emit a shell script that replaces each duplicate with a hardlink to a canonical original")
+	showStats    = flag.Bool("stats", false, "print DB stats and dump all rows")
+	quick        = flag.Bool("quick", false, "quick update: skip files already in the database")
+	noHash       = flag.Bool("no-hash", false, "don't hash files, just record path/size/modtime")
+	hostname     = flag.String("hostname", "", "custom hostname to use for the database")
+	profile      = flag.Bool("profile", false, "write a CPU profile to default.pgo")
+)
 
 func main() {
 	if err := run(); err != nil {
-		log.Error().Err(err).Msg("Fatal error")
+		log.Error().Err(err).Msg("fatal error")
 		os.Exit(1)
 	}
 }
 
 func run() error {
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout})
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 	zerolog.SetGlobalLevel(zerolog.WarnLevel)
-	// log.Println("gocate... a fancy locate replacement written in Go")
-
-	var err error
 
 	flag.Parse()
 
 	if *profile {
-		f, err := os.Create("default.pgo")
+		stop, err := startProfile("default.pgo")
 		if err != nil {
-			return fmt.Errorf("could not create CPU profile: %w", err)
+			return err
 		}
-		defer func() {
-			if err := f.Close(); err != nil {
-				log.Error().Err(err).Msg("failed to close file")
-			}
-		}()
-		if err := pprof.StartCPUProfile(f); err != nil {
-			log.Error().Err(err).Msg("could not start CPU profile: ")
+		defer stop()
+	}
+
+	s, err := store.Open(*configDir, *hostname)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := s.Close(); err != nil {
+			log.Error().Err(err).Msg("failed to close db")
 		}
-		defer pprof.StopCPUProfile()
-	}
-
-	// ensure needed paths exist
-	// TODO should we create this or just bail if it doesn't exist?
-	if err = os.MkdirAll(*gocateDir, 0775); err != nil {
-		log.Error().Err(err).Str("dir", *gocateDir).Msg("Failed to create dir")
-	}
-
-	// open database
-	dbFile := filepath.Join(*gocateDir, "files.db")
-	fdb, err = ql.OpenFile(dbFile, &ql.Options{CanCreate: true, FileFormat: 2})
-	if err != nil {
-		return fmt.Errorf("failed to open DB: %w", err)
-	}
-
-	// Setup tables for storing file data
-	dbCtx := ql.NewRWCtx()
-	_, _, err = fdb.Run(dbCtx, `
-	BEGIN TRANSACTION;
-		CREATE TABLE IF NOT EXISTS files (
-			hostname string,
-			filename string,
-			size int64,
-			modtimestamp time,
-			imohash string,
-			xxh3hash string,
-		);
-	COMMIT;`)
-	// ALTER TABLE files ADD xxh3hash string;
-	if err != nil {
-		return fmt.Errorf("failed to create table: %w", err)
-	}
-
-	searchPath, err := filepath.Abs(*updatePath)
-	if err != nil {
-		return fmt.Errorf("failed to get update path absolute path: %w", err)
-	}
-
-	// Create highwayhash instance
-	// key, err := hex.DecodeString("9d6a5ccfe55ce0fa167002bd76b6409d66e4cfec57d1827e802ca2f5f6a3")
-	// if err != nil {
-	// 	log.Panic().Err(err).Msg("Failed to decode key")
-	// }
-	// hHash, err = highwayhash.New(key[:32])
-	// if err != nil {
-	// 	log.Panic().Err(err).Msg("Failed to create HighwayHash instance")
-	// }
+	}()
 
 	if *updatedbFlag {
-		worker = make(chan fileInfo)
-		walkerDone = make(chan bool, 1)
-		log.Trace().Msg("starting worker")
-
-		go updatedb(searchPath)
-
-		log.Trace().Msg("waiting for walker to be done")
-
-	while:
-		for {
-			select {
-			case fi := <-worker:
-				log.Trace().Interface("file", fi).Msg("hasher finished")
-				rs, _, selErr := fdb.Execute(dbCtx, walkSelectQuery, fi.Path)
-				if selErr != nil {
-					log.Error().Err(selErr).Msg("Select failed")
-				}
-				fr, err := rs[0].FirstRow()
-				if err != nil {
-					log.Error().Err(err).Msg("Failed fetching firstrow")
-				}
-				if len(fr) == 0 {
-					_, _, exErr := fdb.Execute(dbCtx, walkInsertQuery, fi.Path, fi.Size, fi.ModTime, fi.Imohash, fi.XXH3Hash)
-					if exErr != nil {
-						log.Error().Err(exErr).Msg("Insert failed to db.Execute")
-					}
-				}
-				if len(fr) != 0 && !*quick {
-					if fr[3] != fi.Imohash || fr[4] != fi.XXH3Hash {
-						_, _, exErr := fdb.Execute(dbCtx, walkUpdateQuery, fi.Path, fi.Size, fi.ModTime, fi.Imohash, fi.XXH3Hash)
-						if exErr != nil {
-							log.Error().Err(exErr).Msg("Update failed to db.Execute")
-						}
-					}
-				}
-			case <-walkerDone:
-				log.Trace().Msg("walker done")
-				// Wait a bit for any remaining goroutines to finish
-				time.Sleep(2 * time.Second)
-				close(worker)
-				break while
-			}
+		root, err := filepath.Abs(*updatePath)
+		if err != nil {
+			return fmt.Errorf("resolve path %q: %w", *updatePath, err)
+		}
+		if err := index.Run(s, root, index.Options{Hash: !*noHash, Quick: *quick}); err != nil {
+			return err
 		}
 	}
 
 	if *printDupes {
-		printDuplicates()
+		if err := showDuplicates(s); err != nil {
+			return err
+		}
 	}
 
-	if *stats {
-		printStats()
-		printDB()
+	if *dupesScript {
+		if err := showDuplicatesScript(s); err != nil {
+			return err
+		}
+	}
+
+	if *showStats {
+		if err := showInfo(s); err != nil {
+			return err
+		}
 	}
 
 	if flag.NArg() > 0 {
-		search := flag.Arg(0)
-		searchDB(search)
+		if err := search(s, flag.Arg(0)); err != nil {
+			return err
+		}
 	}
 
-	if false {
-		printDB()
-	}
+	return nil
+}
 
+// startProfile begins CPU profiling, returning a stop function to defer.
+func startProfile(path string) (func(), error) {
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, fmt.Errorf("create CPU profile: %w", err)
+	}
+	if err := pprof.StartCPUProfile(f); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("start CPU profile: %w", err)
+	}
+	return func() {
+		pprof.StopCPUProfile()
+		if err := f.Close(); err != nil {
+			log.Error().Err(err).Msg("failed to close profile")
+		}
+	}, nil
+}
+
+func search(s *store.Store, pattern string) error {
+	files, err := s.Search(pattern)
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		fmt.Println(f.Path)
+	}
+	return nil
+}
+
+func showDuplicates(s *store.Store) error {
+	groups, err := s.Duplicates()
+	if err != nil {
+		return err
+	}
+	for _, files := range groups {
+		fmt.Println(strings.Join(files, " "))
+	}
+	return nil
+}
+
+// showDuplicatesScript prints a /bin/sh script that deduplicates files by
+// replacing every copy in a duplicate group with a hardlink to the first
+// (canonical) member of the group. The canonical file is left untouched, so no
+// content is lost and only one inode's worth of disk is consumed per group.
+// The first member of each group is chosen deterministically (sorted), so
+// re-running the script after more files have been added is stable.
+func showDuplicatesScript(s *store.Store) error {
+	groups, err := s.Duplicates()
+	if err != nil {
+		return err
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+	fmt.Println("#!/bin/sh")
+	fmt.Println("# Auto-generated by `gocate -dupes-script`. Replaces each duplicate")
+	fmt.Println("# with a hardlink to the first path in its group. Review before running.")
+	fmt.Println("set -eu")
+	for _, files := range groups {
+		canonical := files[0]
+		for _, dup := range files[1:] {
+			if dup == canonical {
+				continue
+			}
+			fmt.Printf("ln -f -- %s %s\n", shellQuote(canonical), shellQuote(dup))
+		}
+	}
+	return nil
+}
+
+// shellQuote wraps a path in single quotes, escaping any embedded single
+// quotes so the result is safe to interpolate into a /bin/sh script.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+func showInfo(s *store.Store) error {
+	name, tables, err := s.Info()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("db: %s tables: %s\n", name, strings.Join(tables, ", "))
+
+	files, err := s.Dump()
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		fmt.Printf("%s\t%d\t%s\t%s\t%s\n", f.Path, f.Size, f.ModTime.Format("2006-01-02 15:04:05"), f.Imohash, f.XXH3Hash)
+	}
 	return nil
 }
