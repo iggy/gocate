@@ -14,4 +14,3 @@ tasks:
       CGO_ENABLED: 0
     cmds:
       - go build -ldflags="-extldflags=-static -w -s" ./cmd/gocate/
-
