@@ -1,0 +1,17 @@
+---
+version: 3
+tasks:
+  build:
+    desc: build utility
+    env:
+      CGO_ENABLED: 0
+    cmds:
+      - go build -ldflags="-extldflags=-static -w -s" ./cmd/gocate/
+
+  build-profile:
+    desc: build PGO version of utility
+    env:
+      CGO_ENABLED: 0
+    cmds:
+      - go build -ldflags="-extldflags=-static -w -s" ./cmd/gocate/
+
