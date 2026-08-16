@@ -34,9 +34,14 @@ type Store struct {
 	ctx      *ql.TCtx
 	hostname string
 
-	insertQ ql.List
-	selectQ ql.List
-	updateQ ql.List
+	// insertStmt/updateStmt are the per-row statements used inside a batch
+	// transaction. They deliberately carry no BEGIN/COMMIT of their own: the
+	// caller wraps the whole batch in a single transaction, which is ~200x
+	// faster than committing after every row.
+	insertStmt ql.List
+	selectQ    ql.List
+	updateStmt ql.List
+	loadQ      ql.List
 
 	mu sync.Mutex
 }
@@ -93,10 +98,8 @@ func Open(dir, hostname string) (*Store, error) {
 func (s *Store) compileQueries() error {
 	var err error
 
-	if s.insertQ, err = ql.Compile(fmt.Sprintf(`
-		BEGIN TRANSACTION;
-			INSERT INTO files VALUES("%s", $1, $2, $3, $4, $5);
-		COMMIT;`, s.hostname)); err != nil {
+	if s.insertStmt, err = ql.Compile(fmt.Sprintf(
+		`INSERT INTO files VALUES("%s", $1, $2, $3, $4, $5);`, s.hostname)); err != nil {
 		return fmt.Errorf("compile insert: %w", err)
 	}
 
@@ -105,17 +108,24 @@ func (s *Store) compileQueries() error {
 		return fmt.Errorf("compile select: %w", err)
 	}
 
-	if s.updateQ, err = ql.Compile(fmt.Sprintf(`
-		BEGIN TRANSACTION;
-			UPDATE files SET
-				hostname = "%s",
-				size = $2,
-				modtimestamp = $3,
-				imohash = $4,
-				xxh3hash = $5
-			WHERE filename = $1;
-		COMMIT;`, s.hostname)); err != nil {
+	if s.updateStmt, err = ql.Compile(fmt.Sprintf(`
+		UPDATE files SET
+			hostname = "%s",
+			size = $2,
+			modtimestamp = $3,
+			imohash = $4,
+			xxh3hash = $5
+		WHERE filename = $1;`, s.hostname)); err != nil {
 		return fmt.Errorf("compile update: %w", err)
+	}
+
+	// loadQ reads every row for this host in one scan. Scoping by hostname
+	// matters: the same DB can hold rows from multiple hosts (via -hostname),
+	// and the snapshot map is keyed by path, so a cross-host path would
+	// otherwise collide with the current host's row.
+	if s.loadQ, err = ql.Compile(fmt.Sprintf(
+		`SELECT * FROM files WHERE hostname == "%s";`, s.hostname)); err != nil {
+		return fmt.Errorf("compile load: %w", err)
 	}
 
 	return nil
@@ -163,6 +173,8 @@ func (s *Store) firstRow(path string) ([]any, error) {
 
 // Upsert inserts fi if no row exists for its path, otherwise updates the row
 // when a hash has changed. When quick is true, existing rows are left untouched.
+// It runs in a single transaction. For bulk indexing prefer WriteBatch, which
+// amortizes the transaction across many rows.
 func (s *Store) Upsert(fi FileInfo, quick bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -174,11 +186,7 @@ func (s *Store) Upsert(fi FileInfo, quick bool) error {
 
 	// No existing row: insert.
 	if len(fr) == 0 {
-		if _, _, err := s.db.Execute(s.ctx, s.insertQ,
-			fi.Path, fi.Size, fi.ModTime, fi.Imohash, fi.XXH3Hash); err != nil {
-			return fmt.Errorf("insert %q: %w", fi.Path, err)
-		}
-		return nil
+		return s.execBatch([]FileInfo{fi}, []bool{false})
 	}
 
 	// Existing row: in quick mode leave it alone; otherwise update if a hash changed.
@@ -187,10 +195,70 @@ func (s *Store) Upsert(fi FileInfo, quick bool) error {
 		return nil
 	}
 	if fr[4] != fi.Imohash || fr[5] != fi.XXH3Hash {
-		if _, _, err := s.db.Execute(s.ctx, s.updateQ,
-			fi.Path, fi.Size, fi.ModTime, fi.Imohash, fi.XXH3Hash); err != nil {
-			return fmt.Errorf("update %q: %w", fi.Path, err)
+		return s.execBatch([]FileInfo{fi}, []bool{true})
+	}
+	return nil
+}
+
+// LoadExisting returns every row for this host as a path -> FileInfo map. It is
+// a single full-table read used to seed the in-memory index for a run, so the
+// indexer can decide insert-vs-update without a per-file SELECT (which would
+// otherwise be an O(n^2) sequence of full table scans).
+func (s *Store) LoadExisting() (map[string]FileInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rss, _, err := s.db.Execute(s.ctx, s.loadQ)
+	if err != nil {
+		return nil, fmt.Errorf("load existing: %w", err)
+	}
+	files, err := collectFiles(rss)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]FileInfo, len(files))
+	for _, fi := range files {
+		if fi.Path == "" {
+			continue
 		}
+		m[fi.Path] = fi
+	}
+	return m, nil
+}
+
+// WriteBatch persists a batch of files in one transaction. isUpdate[i] selects
+// whether fi[i] is an UPDATE (true) or INSERT (false); the caller decides that
+// from its in-memory index so WriteBatch performs no existence lookups.
+func (s *Store) WriteBatch(fis []FileInfo, isUpdate []bool) error {
+	if len(fis) == 0 || len(fis) != len(isUpdate) {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.execBatch(fis, isUpdate)
+}
+
+// execBatch runs fis inside a single BEGIN/COMMIT, rolling back on the first
+// error. Callers must hold s.mu.
+func (s *Store) execBatch(fis []FileInfo, isUpdate []bool) error {
+	if _, _, err := s.db.Run(s.ctx, "BEGIN TRANSACTION;"); err != nil {
+		return fmt.Errorf("begin batch: %w", err)
+	}
+	for i, fi := range fis {
+		var stmt ql.List
+		if isUpdate[i] {
+			stmt = s.updateStmt
+		} else {
+			stmt = s.insertStmt
+		}
+		if _, _, err := s.db.Execute(s.ctx, stmt,
+			fi.Path, fi.Size, fi.ModTime, fi.Imohash, fi.XXH3Hash); err != nil {
+			_, _, _ = s.db.Run(s.ctx, "ROLLBACK;")
+			return fmt.Errorf("write %q: %w", fi.Path, err)
+		}
+	}
+	if _, _, err := s.db.Run(s.ctx, "COMMIT;"); err != nil {
+		return fmt.Errorf("commit batch: %w", err)
 	}
 	return nil
 }
