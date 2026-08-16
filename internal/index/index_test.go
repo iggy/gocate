@@ -108,3 +108,40 @@ func TestRunQuickSkipsExisting(t *testing.T) {
 		}
 	}
 }
+
+// TestRunReindexIsIdempotent guards against a regression where the batched
+// write path inserts duplicate rows instead of updating in place. Indexing the
+// same tree a second time must not change the row count.
+func TestRunReindexIsIdempotent(t *testing.T) {
+	s := openStore(t)
+	root := buildTree(t)
+
+	count := func(t *testing.T) int {
+		t.Helper()
+		files, err := s.Dump()
+		if err != nil {
+			t.Fatalf("Dump: %v", err)
+		}
+		return len(files)
+	}
+
+	if err := Run(s, root, Options{Hash: true, Workers: 2}); err != nil {
+		t.Fatalf("first Run: %v", err)
+	}
+	afterFirst := count(t)
+
+	if err := Run(s, root, Options{Hash: true, Workers: 2}); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	if got := count(t); got != afterFirst {
+		t.Fatalf("row count changed after re-index: %d -> %d (duplicate inserts)", afterFirst, got)
+	}
+
+	// A third run in quick mode must also be a no-op count-wise.
+	if err := Run(s, root, Options{Hash: true, Quick: true, Workers: 2}); err != nil {
+		t.Fatalf("quick Run: %v", err)
+	}
+	if got := count(t); got != afterFirst {
+		t.Fatalf("row count changed after quick re-index: %d -> %d", afterFirst, got)
+	}
+}
