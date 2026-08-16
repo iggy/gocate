@@ -144,3 +144,42 @@ func TestDuplicates(t *testing.T) {
 		t.Fatalf("dup group = %v, want [/a /b]", got)
 	}
 }
+
+// TestLoadExistingScopesByHost verifies LoadExisting only returns rows for
+// this host, not rows from other hosts sharing the same DB file.
+func TestLoadExistingScopesByHost(t *testing.T) {
+	dir := t.TempDir()
+
+	// hostA inserts a row that hostB must NOT see.
+	a, err := Open(dir, "hostA")
+	if err != nil {
+		t.Fatalf("open hostA: %v", err)
+	}
+	if err := a.Upsert(FileInfo{Path: "/shared", ModTime: time.Unix(1, 0), XXH3Hash: "a"}, false); err != nil {
+		t.Fatalf("upsert hostA: %v", err)
+	}
+	if err := a.Close(); err != nil {
+		t.Fatalf("close hostA: %v", err)
+	}
+
+	b, err := Open(dir, "hostB")
+	if err != nil {
+		t.Fatalf("open hostB: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := b.Close(); err != nil {
+			t.Errorf("close hostB: %v", err)
+		}
+	})
+
+	m, err := b.LoadExisting()
+	if err != nil {
+		t.Fatalf("LoadExisting hostB: %v", err)
+	}
+	if _, ok := m["/shared"]; ok {
+		t.Fatalf("hostB LoadExisting leaked hostA row /shared")
+	}
+	if len(m) != 0 {
+		t.Fatalf("hostB LoadExisting = %d rows, want 0", len(m))
+	}
+}

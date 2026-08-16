@@ -4,12 +4,16 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime/pprof"
 	"strings"
+	"syscall"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -44,6 +48,23 @@ func run() error {
 
 	flag.Parse()
 
+	// A SIGINT cancels the in-flight indexing run so the consumer can flush its
+	// current write batch (committing partial progress) instead of being killed
+	// mid-transaction. A second SIGINT forces an immediate exit.
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+	go func() {
+		first := <-sigCh
+		log.Warn().Stringer("signal", first).Msg("interrupt received; flushing index and exiting")
+		stop()
+		if <-sigCh != nil {
+			os.Exit(130) // second interrupt: bail out now
+		}
+	}()
+
 	if *profile {
 		stop, err := startProfile("default.pgo")
 		if err != nil {
@@ -67,8 +88,12 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("resolve path %q: %w", *updatePath, err)
 		}
-		if err := index.Run(s, root, index.Options{Hash: !*noHash, Quick: *quick}); err != nil {
-			return err
+		if err := index.RunCtx(ctx, s, root, index.Options{Hash: !*noHash, Quick: *quick}); err != nil {
+			if errors.Is(err, context.Canceled) {
+				log.Warn().Msg("indexing interrupted; partial progress committed")
+			} else {
+				return err
+			}
 		}
 	}
 
