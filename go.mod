@@ -6,7 +6,7 @@ require (
 	github.com/kalafut/imohash v1.1.1
 	github.com/rs/zerolog v1.35.1
 	github.com/zeebo/xxh3 v1.1.0
-	modernc.org/ql v1.5.2
+	modernc.org/ql v1.6.0
 )
 
 require (
