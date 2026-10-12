@@ -10,6 +10,8 @@ or list duplicate files by content hash.
   hashes (`imohash` for speed, `xxh3` as a collision-free tiebreaker).
 - Regex filename search.
 - Duplicate detection by content hash.
+- Integrity checking (`-checksum`): report files whose content no longer
+  matches the stored hashes, or that were never indexed.
 - Incremental (`-quick`) and metadata-only (`-no-hash`) indexing modes.
 - Live one-line progress while indexing (`24,004/38,012 scanned`), automatically
   silent when stderr is not a terminal, so cron runs stay quiet.
@@ -45,6 +47,9 @@ gocate -dupes
 # Print DB info and dump all rows.
 gocate -stats
 
+# Verify file checksums against the database.
+gocate -checksum -path /important/data
+
 # Force the progress line even though stderr is not a terminal.
 gocate -updatedb -path /var/log -progress=true 2>/tmp/index.log
 ```
@@ -65,6 +70,7 @@ gocate -updatedb -path /var/log -progress=true 2>/tmp/index.log
 | `-stats`     | Print DB stats and dump all rows.                        |
 | `-hostname`  | Override the hostname recorded with each row.            |
 | `-profile`   | Write a CPU profile to `default.pgo` (for PGO builds).   |
+| `-checksum`  | Verify checksums against the DB (exit 1 on drift).       |
 
 ## Layout
 
