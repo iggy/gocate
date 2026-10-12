@@ -1,6 +1,8 @@
 package index
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -225,5 +227,20 @@ func TestRunReindexIsIdempotent(t *testing.T) {
 	}
 	if got := count(t); got != afterFirst {
 		t.Fatalf("row count changed after quick re-index: %d -> %d", afterFirst, got)
+	}
+}
+
+// TestRunCtxCancellation checks that an interrupted run says so instead of
+// looking like it indexed the whole tree.
+func TestRunCtxCancellation(t *testing.T) {
+	s := openStore(t)
+	root := buildTree(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := RunCtx(ctx, s, root, Options{Hash: true, Workers: 2})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("RunCtx error = %v, want context.Canceled", err)
 	}
 }
