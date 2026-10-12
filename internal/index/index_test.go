@@ -231,7 +231,8 @@ func TestRunReindexIsIdempotent(t *testing.T) {
 }
 
 // TestRunCtxCancellation checks that an interrupted run says so instead of
-// looking like it indexed the whole tree.
+// looking like it indexed the whole tree, and that the progress callback still
+// gets its final snapshot so the summary reflects the rows actually committed.
 func TestRunCtxCancellation(t *testing.T) {
 	s := openStore(t)
 	root := buildTree(t)
@@ -239,8 +240,13 @@ func TestRunCtxCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := RunCtx(ctx, s, root, Options{Hash: true, Workers: 2})
+	var calls int
+	err := RunCtx(ctx, s, root, Options{Hash: true, Workers: 2,
+		Progress: func(Progress) { calls++ }})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("RunCtx error = %v, want context.Canceled", err)
+	}
+	if calls == 0 {
+		t.Error("no final progress snapshot on cancellation")
 	}
 }
