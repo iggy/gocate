@@ -84,9 +84,17 @@ func (p *progress) update(pr index.Progress) {
 			scanned(pr), groupCount(int64(pr.Indexed)), humanBytes(pr.Bytes), elapsed)
 	}
 	p.frame++
-	// Carriage return then clear-to-end-of-line: the line is replaced, never
-	// appended to, and stays unfinished until finish terminates it.
-	fmt.Fprintf(p.w, "\r\x1b[K%s", line)
+	p.draw("%s", line)
+}
+
+// draw replaces the single status line, which stays unterminated until finish
+// ends it.
+//
+// Write errors are ignored on purpose: the line is cosmetic, and a lost stderr
+// (a closed pipe, a terminal hangup) must not abort an indexing run that is
+// otherwise healthy, nor bury the run's real output in write errors.
+func (p *progress) draw(format string, args ...any) {
+	_, _ = fmt.Fprintf(p.w, "\r\x1b[K"+format, args...)
 }
 
 // scanned renders the scan counter as "done/total" when the tree was counted up
@@ -109,7 +117,7 @@ func (p *progress) finish(verb string) {
 		return
 	}
 	pr := p.last
-	fmt.Fprintf(p.w, "\r\x1b[K%s %s: %s entries scanned, %s rows written, %s skipped, %s hashed in %s\n",
+	p.draw("%s %s: %s entries scanned, %s rows written, %s skipped, %s hashed in %s\n",
 		verb,
 		ellipsize(pr.Root, maxRootRunes),
 		scanned(pr),
