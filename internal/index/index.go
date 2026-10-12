@@ -62,7 +62,9 @@ func Run(s *store.Store, root string, opts Options) error {
 
 // RunCtx indexes the tree rooted at root into s according to opts, stopping
 // early when ctx is cancelled. A cancelled walk still flushes the in-flight
-// write batch so partial progress is committed rather than lost.
+// write batch so partial progress is committed rather than lost, and the
+// cancellation is returned as ctx.Err() so callers can tell an interrupted run
+// from one that indexed the whole tree.
 func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) error {
 	workers := opts.Workers
 	if workers <= 0 {
@@ -96,9 +98,10 @@ func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) erro
 	var wg sync.WaitGroup
 
 	// Consumer: drain results into the store in batched transactions until the
-	// channel is closed. Batching amortizes the transaction overhead (a single
-	// commit for many rows is ~200x faster than one commit per row) and bounds
-	// how much work a Ctrl-C can cost: at most the in-flight batch.
+	// channel is closed or ctx is cancelled. Batching amortizes the transaction
+	// overhead (a single commit for many rows is ~200x faster than one commit
+	// per row) and bounds how much work a Ctrl-C can cost: at most the in-flight
+	// batch.
 	consumerDone := make(chan struct{})
 	go func() {
 		defer close(consumerDone)
@@ -116,32 +119,43 @@ func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) erro
 			isUpdate = isUpdate[:0]
 			batchSize = 0
 		}
-		for fi := range results {
-			old, ok := existing[fi.Path]
-			// Existing row: skip if nothing changed; otherwise UPDATE. New
-			// row: INSERT. Deciding here from the read-only snapshot lets us
-			// batch writes without a per-row existence lookup.
-			if ok {
-				if fi.Imohash == old.Imohash && fi.XXH3Hash == old.XXH3Hash {
-					continue // Skip unchanged files
+		for {
+			select {
+			case fi, ok := <-results:
+				if !ok {
+					// Channel closed, flush remaining and exit
+					flush()
+					return
 				}
-				// A result that was never hashed (-no-hash) must not blank the
-				// hashes already held for a file whose size and modtime are
-				// unchanged, or a single no-hash run would erase the duplicate
-				// index for the whole tree.
-				if fi.XXH3Hash == "" && old.XXH3Hash != "" &&
-					fi.Size == old.Size && fi.ModTime.Equal(old.ModTime) {
-					continue
+				old, ok := existing[fi.Path]
+				// Existing row: skip if nothing changed; otherwise UPDATE. New
+				// row: INSERT. Deciding here from the read-only snapshot lets us
+				// batch writes without a per-row existence lookup.
+				if ok {
+					if fi.Imohash == old.Imohash && fi.XXH3Hash == old.XXH3Hash {
+						continue // Skip unchanged files
+					}
+					// A result that was never hashed (-no-hash) must not blank the
+					// hashes already held for a file whose size and modtime are
+					// unchanged, or a single no-hash run would erase the duplicate
+					// index for the whole tree.
+					if fi.XXH3Hash == "" && old.XXH3Hash != "" &&
+						fi.Size == old.Size && fi.ModTime.Equal(old.ModTime) {
+						continue
+					}
 				}
-			}
-			batch = append(batch, fi)
-			isUpdate = append(isUpdate, ok)
-			batchSize += fi.Size
-			if len(batch) >= batchRows || batchSize >= batchBytes {
+				batch = append(batch, fi)
+				isUpdate = append(isUpdate, ok)
+				batchSize += fi.Size
+				if len(batch) >= batchRows || batchSize >= batchBytes {
+					flush()
+				}
+			case <-ctx.Done():
+				// Cancellation: flush current batch and exit immediately
 				flush()
+				return
 			}
 		}
-		flush()
 	}()
 
 	walkErr := filepath.Walk(root, func(path string, info fs.FileInfo, err error) error {
@@ -216,7 +230,10 @@ func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) erro
 	if walkErr != nil && !errors.Is(walkErr, context.Canceled) {
 		return fmt.Errorf("walk %q: %w", root, walkErr)
 	}
-	return nil
+	// A cancelled walk is reported as context.Canceled (not nil) so callers can
+	// tell an interrupted run from a complete one: the flush above already
+	// committed the partial progress either way.
+	return walkErr
 }
 
 // entryAction says what the walk should do with one directory entry.

@@ -58,7 +58,7 @@ func run() error {
 	defer signal.Stop(sigCh)
 	go func() {
 		first := <-sigCh
-		log.Warn().Stringer("signal", first).Msg("interrupt received; flushing index and exiting")
+		log.Warn().Stringer("signal", first).Msg("interrupt received; waiting for workers to finish, flushing index, and exiting")
 		stop()
 		if <-sigCh != nil {
 			os.Exit(130) // second interrupt: bail out now
