@@ -121,8 +121,18 @@ func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) erro
 			// Existing row: skip if nothing changed; otherwise UPDATE. New
 			// row: INSERT. Deciding here from the read-only snapshot lets us
 			// batch writes without a per-row existence lookup.
-			if ok && fi.Imohash == old.Imohash && fi.XXH3Hash == old.XXH3Hash {
-				continue
+			if ok {
+				if fi.Imohash == old.Imohash && fi.XXH3Hash == old.XXH3Hash {
+					continue // Skip unchanged files
+				}
+				// A result that was never hashed (-no-hash) must not blank the
+				// hashes already held for a file whose size and modtime are
+				// unchanged, or a single no-hash run would erase the duplicate
+				// index for the whole tree.
+				if fi.XXH3Hash == "" && old.XXH3Hash != "" &&
+					fi.Size == old.Size && fi.ModTime.Equal(old.ModTime) {
+					continue
+				}
 			}
 			batch = append(batch, fi)
 			isUpdate = append(isUpdate, ok)
@@ -145,7 +155,10 @@ func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) erro
 
 		fi := store.FileInfo{Path: path, Size: info.Size(), ModTime: info.ModTime()}
 
-		if !shouldHash(existing, path, info, opts) {
+		switch classify(existing, path, info, opts) {
+		case actionSkip:
+			return nil
+		case actionRecord:
 			select {
 			case results <- fi:
 			case <-ctx.Done():
@@ -206,17 +219,35 @@ func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) erro
 	return nil
 }
 
-// shouldHash reports whether a dirent should be hashed: it must be a regular
-// file, hashing must be enabled, and in quick mode it must not already be in
-// the snapshot. existing is the read-only map returned by LoadExisting; it is
-// not mutated here.
-func shouldHash(existing map[string]store.FileInfo, path string, info fs.FileInfo, opts Options) bool {
-	if !opts.Hash || !info.Mode().IsRegular() {
-		return false
+// entryAction says what the walk should do with one directory entry.
+type entryAction int
+
+const (
+	// actionSkip leaves an entry alone entirely: quick mode has already indexed
+	// it, so neither its row nor its stored hashes are rewritten.
+	actionSkip entryAction = iota
+	// actionRecord stores path, size and modtime without hashing.
+	actionRecord
+	// actionHash hashes the content before recording it.
+	actionHash
+)
+
+// classify decides how one directory entry is indexed: quick mode leaves files
+// the snapshot already holds untouched, hashing can be switched off entirely
+// (-no-hash), and non-regular entries (directories, symlinks) are only ever
+// recorded, never hashed. existing is the read-only map returned by
+// LoadExisting; it is not mutated here.
+func classify(existing map[string]store.FileInfo, path string, info fs.FileInfo, opts Options) entryAction {
+	if !info.Mode().IsRegular() {
+		return actionRecord
 	}
 	if opts.Quick {
-		_, has := existing[path]
-		return !has
+		if _, seen := existing[path]; seen {
+			return actionSkip
+		}
 	}
-	return true
+	if !opts.Hash {
+		return actionRecord
+	}
+	return actionHash
 }

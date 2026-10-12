@@ -140,6 +140,57 @@ func TestRunByteBudgetContention(t *testing.T) {
 	}
 }
 
+// TestRunQuickPreservesStoredHashes guards the incremental path: a quick
+// re-index must leave existing rows exactly as they were, including their
+// hashes, so duplicate detection keeps working across runs.
+func TestRunQuickPreservesStoredHashes(t *testing.T) {
+	s := openStore(t)
+	root := buildTree(t)
+
+	if err := Run(s, root, Options{Hash: true, Workers: 2}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if err := Run(s, root, Options{Hash: true, Quick: true, Workers: 2}); err != nil {
+		t.Fatalf("quick Run: %v", err)
+	}
+
+	groups, err := s.Duplicates()
+	if err != nil {
+		t.Fatalf("Duplicates: %v", err)
+	}
+	if len(groups) != 1 || len(groups[0]) != 2 {
+		t.Fatalf("quick run lost duplicate groups: %+v", groups)
+	}
+}
+
+// TestRunNoHashPreservesStoredHashes covers the same hazard from the other
+// direction: recording metadata without hashing must not erase the hashes of
+// files that have not changed since they were hashed.
+func TestRunNoHashPreservesStoredHashes(t *testing.T) {
+	s := openStore(t)
+	root := buildTree(t)
+
+	if err := Run(s, root, Options{Hash: true, Workers: 2}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if err := Run(s, root, Options{Hash: false}); err != nil {
+		t.Fatalf("no-hash Run: %v", err)
+	}
+
+	files, err := s.Search(`\.txt$`)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("got %d .txt rows, want 3", len(files))
+	}
+	for _, f := range files {
+		if f.XXH3Hash == "" || f.Imohash == "" {
+			t.Fatalf("no-hash run erased the stored hashes of %q", f.Path)
+		}
+	}
+}
+
 // TestRunReindexIsIdempotent guards against a regression where the batched
 // write path inserts duplicate rows instead of updating in place. Indexing the
 // same tree a second time must not change the row count.
