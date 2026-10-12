@@ -17,4 +17,5 @@ jobs:
           DISABLE_LINTERS: SPELL_CSPELL
           # GO_GOLANGCI_LINT_CLI_LINT_MODE: project
           GO_REVIVE_CLI_LINT_MODE: project
-          SPELL_LYCHEE_ARGUMENTS: "--offline"
+          SPELL_LYCHEE_ARGUMENTS: "--offline"  # FIXME this isn't getting passed to lychee for some reason
+          MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: AGENTS.md  # machine maintained file

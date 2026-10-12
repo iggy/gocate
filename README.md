@@ -56,25 +56,25 @@ gocate -updatedb -path /var/log -progress=true 2>/tmp/index.log
 
 ### Flags
 
-| Flag         | Description                                              |
+| Flag         | Description                                                    |
 |--------------|----------------------------------------------------------|
-| `-updatedb`  | Update the database by walking `-path`.                  |
-| `-path`      | Path to walk and index (default `.`).                    |
-| `-config`    | Directory holding the file DB (default `~/.gocate`).     |
-| `-quick`     | Incremental update: skip files already in the database.  |
-| `-no-hash`   | Record path/size/modtime only; don't hash file contents. |
-| `-workers`   | Files to hash at once (default: one per CPU).            |
-| `-progress`  | Show indexing progress on a terminal; quiet when piped.  |
-| `-total`     | Count the tree first so progress shows a total.          |
-| `-dupes`     | Print groups of duplicate files.                         |
-| `-stats`     | Print DB stats and dump all rows.                        |
-| `-hostname`  | Override the hostname recorded with each row.            |
-| `-profile`   | Write a CPU profile to `default.pgo` (for PGO builds).   |
-| `-checksum`  | Verify checksums against the DB (exit 1 on drift).       |
+| `-updatedb`  | Update the database by walking `-path`.                        |
+| `-path`      | Path to walk and index (default `.`).                          |
+| `-config`    | Directory holding the file DB (default `~/.gocate`).           |
+| `-quick`     | Incremental update: skip files already in the database.        |
+| `-no-hash`   | Record path/size/modtime only; don't hash file contents.       |
+| `-workers`   | Files to hash at once (default: one per CPU).                  |
+| `-progress`  | Show indexing progress on a terminal; quiet when piped.        |
+| `-total`     | Count the tree first so progress shows a total.                |
+| `-dupes`     | Print groups of duplicate files.                               |
+| `-stats`     | Print DB stats and dump all rows.                              |
+| `-hostname`  | Override the hostname recorded with each row.                  |
+| `-profile`   | Write a CPU profile to `default.pgo` (for PGO builds).         |
+| `-checksum`  | Verify checksums against the DB (exit 1 on drift).             |
 
 ## Layout
 
-```
+```text
 cmd/gocate      # CLI: flag parsing and output
 internal/store  # embedded SQL database: schema, upsert, search, duplicates
 internal/index  # filesystem walk + bounded concurrent hashing pipeline
