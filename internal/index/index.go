@@ -11,6 +11,9 @@
 // database, Run loads the existing rows for the host into an in-memory map once
 // and consults it instead. The map is read-only after construction and is
 // shared between the walk and the consumer without locking.
+//
+// Callers that want to show what a long run is doing pass Options.Progress,
+// which receives periodic snapshots of the pipeline's counters (progress.go).
 package index
 
 import (
@@ -21,6 +24,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog/log"
 
@@ -52,6 +56,21 @@ type Options struct {
 	// holds (sum of fi.Size), so a Ctrl-C that drops an in-flight batch never
 	// forfeits more than this much hashing effort. <= 0 defaults to 4 GiB.
 	BatchBytes int64
+	// Progress, when non-nil, receives a snapshot of the run's counters every
+	// ProgressInterval and once more when the run is over. It is called on a
+	// dedicated goroutine and never concurrently with itself, so an
+	// implementation only has to be safe against its own state. nil (the
+	// default) means no reporting.
+	Progress func(Progress)
+	// ProgressInterval is how often Progress is called. <= 0 defaults to 500ms.
+	// It is ignored when Progress is nil.
+	ProgressInterval time.Duration
+	// CountTotal makes the run walk the tree once, without statting or reading
+	// anything, so Progress reports how many entries there are to visit. It only
+	// pays for itself when someone is watching: <= an extra pass of readdir over
+	// the tree, which is negligible next to hashing but doubles a metadata-only
+	// (-no-hash) run.
+	CountTotal bool
 }
 
 // Run indexes the tree rooted at root into s according to opts. It is the
@@ -82,6 +101,25 @@ func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) erro
 	batchBytes := opts.BatchBytes
 	if batchBytes <= 0 {
 		batchBytes = 4 << 30 // 4 GiB
+	}
+
+	trk := &tracker{start: time.Now()}
+	stopReporting := func() {}
+	if opts.Progress != nil {
+		interval := opts.ProgressInterval
+		if interval <= 0 {
+			interval = 500 * time.Millisecond
+		}
+		stopReporting = newReporter(root, trk, interval, opts.Progress)
+	}
+	// Deferred so the final snapshot is delivered once every row has reached the
+	// store, including the last partial batch the consumer flushes below.
+	defer stopReporting()
+
+	if opts.CountTotal {
+		if err := countEntries(ctx, root, trk); err != nil {
+			return err
+		}
 	}
 
 	// Single full-table read: the snapshot is read-only from here on and is
@@ -147,6 +185,7 @@ func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) erro
 				batch = append(batch, fi)
 				isUpdate = append(isUpdate, ok)
 				batchSize += fi.Size
+				trk.indexed.Add(1)
 				if len(batch) >= batchRows || batchSize >= batchBytes {
 					flush()
 				}
@@ -167,10 +206,12 @@ func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) erro
 			return ctx.Err()
 		}
 
+		trk.scanned.Add(1)
 		fi := store.FileInfo{Path: path, Size: info.Size(), ModTime: info.ModTime()}
 
 		switch classify(existing, path, info, opts) {
 		case actionSkip:
+			trk.skipped.Add(1)
 			return nil
 		case actionRecord:
 			select {
@@ -209,6 +250,8 @@ func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) erro
 				log.Error().Err(hErr).Str("path", path).Msg("failed to hash file; recording unhashed")
 			} else {
 				fi.Imohash, fi.XXH3Hash = imo, xxh
+				trk.hashed.Add(1)
+				trk.bytes.Add(info.Size())
 			}
 			select {
 			case results <- fi:
