@@ -31,8 +31,11 @@ var (
 	showStats    = flag.Bool("stats", false, "print DB stats and dump all rows")
 	quick        = flag.Bool("quick", false, "quick update: skip files already in the database")
 	noHash       = flag.Bool("no-hash", false, "don't hash files, just record path/size/modtime")
+	workersFlag  = flag.Int("workers", 0, "files to hash at once (default: one per CPU; raise it when disk reads, not hashing, are the limit)")
 	hostname     = flag.String("hostname", "", "custom hostname to use for the database")
 	profile      = flag.Bool("profile", false, "write a CPU profile to default.pgo")
+	progressFlag = flag.Bool("progress", true, "show indexing progress on stderr when it is a terminal (set it explicitly to force it on or off)")
+	totalFlag    = flag.Bool("total", true, "walk the tree once up front so progress can report a total entry count (extra readdir pass, no file reads)")
 )
 
 func main() {
@@ -88,12 +91,29 @@ func run() error {
 		if err != nil {
 			return fmt.Errorf("resolve path %q: %w", *updatePath, err)
 		}
-		if err := index.RunCtx(ctx, s, root, index.Options{Hash: !*noHash, Quick: *quick}); err != nil {
-			if errors.Is(err, context.Canceled) {
+		var prog *progress
+		if progressEnabled() {
+			prog = &progress{w: os.Stderr}
+		}
+		opts := index.Options{Hash: !*noHash, Quick: *quick, Workers: *workersFlag}
+		if prog != nil {
+			opts.Progress = prog.update
+			opts.CountTotal = *totalFlag
+		}
+		err = index.RunCtx(ctx, s, root, opts)
+		switch {
+		case err == nil:
+			prog.finish("Indexed")
+		case errors.Is(err, context.Canceled):
+			prog.finish("Interrupted")
+			// The summary line above already says the same thing, so only an
+			// unattended run needs to be told through the log.
+			if prog == nil {
 				log.Warn().Msg("indexing interrupted; partial progress committed")
-			} else {
-				return err
 			}
+		default:
+			prog.finish("Indexing failed")
+			return err
 		}
 	}
 

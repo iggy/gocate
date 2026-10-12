@@ -11,6 +11,8 @@ or list duplicate files by content hash.
 - Regex filename search.
 - Duplicate detection by content hash.
 - Incremental (`-quick`) and metadata-only (`-no-hash`) indexing modes.
+- Live one-line progress while indexing (`24,004/38,012 scanned`), automatically
+  silent when stderr is not a terminal, so cron runs stay quiet.
 
 ## Install / build
 
@@ -42,6 +44,9 @@ gocate -dupes
 
 # Print DB info and dump all rows.
 gocate -stats
+
+# Force the progress line even though stderr is not a terminal.
+gocate -updatedb -path /var/log -progress=true 2>/tmp/index.log
 ```
 
 ### Flags
@@ -53,6 +58,9 @@ gocate -stats
 | `-config`    | Directory holding the file DB (default `~/.gocate`).     |
 | `-quick`     | Incremental update: skip files already in the database.  |
 | `-no-hash`   | Record path/size/modtime only; don't hash file contents. |
+| `-workers`   | Files to hash at once (default: one per CPU).            |
+| `-progress`  | Show indexing progress on a terminal; quiet when piped.  |
+| `-total`     | Count the tree first so progress shows a total.          |
 | `-dupes`     | Print groups of duplicate files.                         |
 | `-stats`     | Print DB stats and dump all rows.                        |
 | `-hostname`  | Override the hostname recorded with each row.            |
