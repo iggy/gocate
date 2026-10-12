@@ -84,6 +84,10 @@ internal/index  # filesystem walk + bounded concurrent hashing pipeline
 
 - Prune entries for files that no longer exist (a "deleted" flag).
 - Batch inserts for faster indexing.
+- Optional `-trust-mtime`: skip hashing files whose size and modtime still match
+  their row, so re-indexing an unchanged tree costs a walk and nothing else. It
+  is weaker than hashing, since it misses edits that preserve mtime (`rsync -t`,
+  tar extraction, `touch -d`), so it stays opt-in.
 - Live updates via filesystem notifications
   ([rjeczalik/notify](https://godoc.org/github.com/rjeczalik/notify)).
 - Open the DB read-only for actions that never write (plain searches, `-dupes`,
