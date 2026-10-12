@@ -97,3 +97,5 @@ internal/index  # filesystem walk + bounded concurrent hashing pipeline
   second run fails to open the database until the indexing run exits. Either add
   read-only support upstream, or serve these actions from a snapshot copy of
   `files.db` taken while the writer is not holding it.
+- ability to merge database files (i.e. have a local db and one that lives on a
+  network fs that local hosts can push their database into)
