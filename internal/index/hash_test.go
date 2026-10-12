@@ -61,17 +61,20 @@ func TestHashFileMissing(t *testing.T) {
 }
 
 // TestHashFileMatchesReadFileBasis verifies the streaming implementation
-// produces byte-identical hashes to the previous os.ReadFile-based approach
-// across small, medium (below imohash sample threshold), and large (above it)
-// files, so existing database rows remain valid.
+// produces byte-identical hashes to the previous os.ReadFile-based approach on
+// both sides of imohash's sample threshold, including the boundary itself where
+// contentHasher switches from one buffered read to sample-plus-stream, so
+// existing database rows remain valid.
 func TestHashFileMatchesReadFileBasis(t *testing.T) {
 	cases := []struct {
 		name string
 		data []byte
 	}{
 		{"small", []byte("hello world")},
-		{"medium", randomBytes(64 * 1024)}, // below imohash.SampleThreshold (128KiB)
-		{"large", randomBytes(512 * 1024)}, // above imohash.SampleThreshold
+		{"under-threshold", randomBytes(imohash.SampleThreshold - 1)},
+		{"at-threshold", randomBytes(imohash.SampleThreshold)},
+		{"over-threshold", randomBytes(imohash.SampleThreshold + 1)},
+		{"large", randomBytes(512 * 1024)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
