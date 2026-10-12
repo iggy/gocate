@@ -34,6 +34,7 @@ var (
 	workersFlag  = flag.Int("workers", 0, "files to hash at once (default: one per CPU; raise it when disk reads, not hashing, are the limit)")
 	hostname     = flag.String("hostname", "", "custom hostname to use for the database")
 	profile      = flag.Bool("profile", false, "write a CPU profile to default.pgo")
+	checksumFlag = flag.Bool("checksum", false, "verify file checksums against the database")
 	progressFlag = flag.Bool("progress", true, "show indexing progress on stderr when it is a terminal (set it explicitly to force it on or off)")
 	totalFlag    = flag.Bool("total", true, "walk the tree once up front so progress can report a total entry count (extra readdir pass, no file reads)")
 )
@@ -131,6 +132,12 @@ func run() error {
 
 	if *showStats {
 		if err := showInfo(s); err != nil {
+			return err
+		}
+	}
+
+	if *checksumFlag {
+		if err := checksum(s); err != nil {
 			return err
 		}
 	}
@@ -233,6 +240,23 @@ func showInfo(s *store.Store) error {
 	}
 	for _, f := range files {
 		fmt.Printf("%s\t%d\t%s\t%s\t%s\n", f.Path, f.Size, f.ModTime.Format("2006-01-02 15:04:05"), f.Imohash, f.XXH3Hash)
+	}
+	return nil
+}
+
+// checksum reports every file under -path whose current content no longer
+// matches the hashes stored for it, plus files that were never indexed. It
+// returns an error when any drift is found so the process exits non-zero.
+func checksum(s *store.Store) error {
+	mismatches, err := index.VerifyCtx(context.Background(), s, *updatePath)
+	if err != nil {
+		return fmt.Errorf("verifying checksums: %w", err)
+	}
+	for _, d := range mismatches {
+		fmt.Printf("%s\t%s\n", d.Status, d.Path)
+	}
+	if len(mismatches) > 0 {
+		return fmt.Errorf("%d checksum mismatches", len(mismatches))
 	}
 	return nil
 }
