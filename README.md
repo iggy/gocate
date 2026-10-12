@@ -86,4 +86,10 @@ internal/index  # filesystem walk + bounded concurrent hashing pipeline
 - Batch inserts for faster indexing.
 - Live updates via filesystem notifications
   ([rjeczalik/notify](https://godoc.org/github.com/rjeczalik/notify)).
-- Open the DB read-only for pure searches.
+- Open the DB read-only for actions that never write (plain searches, `-dupes`,
+  `-dupes-script`, `-stats`, `-checksum`) so they can run while another process
+  is indexing. Today they cannot: `ql.OpenFile` takes an exclusive `fcntl` lock
+  on a hidden lock file beside `files.db` and offers no read-only option, so a
+  second run fails to open the database until the indexing run exits. Either add
+  read-only support upstream, or serve these actions from a snapshot copy of
+  `files.db` taken while the writer is not holding it.
