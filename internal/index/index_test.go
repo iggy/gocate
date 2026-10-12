@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/iggy/gocate/internal/store"
@@ -105,6 +106,36 @@ func TestRunQuickSkipsExisting(t *testing.T) {
 	for _, f := range files {
 		if f.XXH3Hash != "" {
 			t.Fatalf("quick run re-hashed existing file %q", f.Path)
+		}
+	}
+}
+
+// TestRunByteBudgetContention forces every file to wait on the in-flight byte
+// budget by setting it below a single file's size. The budget wait used to run
+// with its mutex released, which killed the process with an "unlock of
+// unlocked mutex" fatal error as soon as one file exceeded the budget.
+func TestRunByteBudgetContention(t *testing.T) {
+	s := openStore(t)
+	root := t.TempDir()
+	want := 4
+	for i, name := range []string{"a.bin", "b.bin", "c.bin", "d.bin"} {
+		writeFile(t, root, name, strings.Repeat(string(rune('a'+i)), 4096))
+	}
+
+	if err := Run(s, root, Options{Hash: true, Workers: 4, MaxBytes: 1}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	files, err := s.Search(`\.bin$`)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	if len(files) != want {
+		t.Fatalf("got %d .bin rows, want %d", len(files), want)
+	}
+	for _, f := range files {
+		if f.XXH3Hash == "" {
+			t.Fatalf("file %q was not hashed under the byte budget", f.Path)
 		}
 	}
 }

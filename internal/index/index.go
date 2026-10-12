@@ -15,6 +15,7 @@ package index
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -37,10 +38,12 @@ type Options struct {
 	// Workers is the maximum number of concurrent hashing goroutines. Values
 	// <= 0 default to runtime.NumCPU().
 	Workers int
-	// MaxBytes caps the total size of files being hashed concurrently, on top
-	// of the Workers count cap. A huge file consumes most of the budget and so
-	// runs nearly alone, while many small files can fill the workers. Values
-	// <= 0 default to 256 MiB per worker.
+	// MaxBytes bounds the file content the hashing workers hold at once, on top
+	// of the Workers count cap. Charges are what a hash actually keeps resident
+	// (the whole file below the imohash sample threshold, a fixed read buffer
+	// above it), so a directory full of huge files still fills every worker.
+	// Lower it to throttle reading on a slow mount. Values <= 0 default to one
+	// worker's worth of content per worker.
 	MaxBytes int64
 	// BatchRows is how many rows the consumer accumulates before committing a
 	// write transaction. <= 0 defaults to 1000.
@@ -67,9 +70,8 @@ func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) erro
 	}
 	maxBytes := opts.MaxBytes
 	if maxBytes <= 0 {
-		// Enough room for the workers to each be hashing a small-ish file at
-		// once, without letting the budget explode for huge trees.
-		maxBytes = int64(workers) * 256 * (1 << 20) // 256 MiB per worker
+		// Room for every worker to hold the most content one hash can occupy.
+		maxBytes = defaultMaxBytes(workers)
 	}
 	batchRows := opts.BatchRows
 	if batchRows <= 0 {
@@ -90,9 +92,7 @@ func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) erro
 
 	results := make(chan store.FileInfo)
 	semCount := make(chan struct{}, workers) // bounds concurrent hasher count
-	var semBytes int64                       // bounds total bytes in flight (guarded by semMu)
-	var semMu sync.Mutex
-	semCond := sync.NewCond(&semMu)
+	budget := newByteBudget(maxBytes)        // bounds content resident in those hashers
 	var wg sync.WaitGroup
 
 	// Consumer: drain results into the store in batched transactions until the
@@ -134,32 +134,6 @@ func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) erro
 		flush()
 	}()
 
-	// acquireBytes blocks until n bytes of the in-flight budget are free, or
-	// until ctx is cancelled. Returns ctx.Err() on cancellation.
-	acquireBytes := func(n int64) error {
-		semMu.Lock()
-		defer semMu.Unlock()
-		for semBytes+n > maxBytes {
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			semCond.Wait()
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		semBytes += n
-		return nil
-	}
-	// releaseByte returns n bytes of the in-flight budget to the pool. It runs
-	// in the hasher goroutine after hashing completes.
-	releaseByte := func(n int64) {
-		semMu.Lock()
-		semBytes -= n
-		semCond.Signal()
-		semMu.Unlock()
-	}
-
 	walkErr := filepath.Walk(root, func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
 			log.Error().Err(err).Str("path", path).Msg("walk error")
@@ -189,9 +163,11 @@ func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) erro
 			wg.Done()
 			return ctx.Err()
 		}
-		// Acquire the byte budget. If cancelled here, release the count slot
-		// we just took.
-		if err := acquireBytes(info.Size()); err != nil {
+		// The charge is what the hash will hold in memory, not the file size: a
+		// huge file is streamed, so charging it its full size would serialise the
+		// whole run onto one worker.
+		charge := residentBytes(info.Size())
+		if err := budget.acquire(ctx, charge); err != nil {
 			<-semCount
 			wg.Done()
 			return err
@@ -199,7 +175,7 @@ func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) erro
 		go func() {
 			defer wg.Done()
 			defer func() { <-semCount }()
-			defer releaseByte(info.Size())
+			defer budget.release(charge)
 
 			imo, xxh, hErr := hashFile(path)
 			if hErr != nil {
@@ -219,14 +195,12 @@ func RunCtx(ctx context.Context, s *store.Store, root string, opts Options) erro
 	close(results)
 	<-consumerDone
 
-	// Wake any acquireBytes waiters so they can observe the cancellation. (The
+	// Wake any budget waiters so they can observe the cancellation. (The
 	// walk is over, so there are none in practice, but this keeps the condvar
 	// honest against future callers of Run on the same machinery.)
-	semMu.Lock()
-	semCond.Broadcast()
-	semMu.Unlock()
+	budget.wakeAll()
 
-	if walkErr != nil && walkErr != context.Canceled {
+	if walkErr != nil && !errors.Is(walkErr, context.Canceled) {
 		return fmt.Errorf("walk %q: %w", root, walkErr)
 	}
 	return nil
