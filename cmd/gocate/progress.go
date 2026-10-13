@@ -128,14 +128,14 @@ func (p *progress) finish(verb string) {
 	)
 }
 
-// ellipsize keeps the tail of a path that is longer than max runes, which is the
+// ellipsize keeps the tail of a path that is longer than maxRunes, which is the
 // part that identifies it, and marks the cut with an ellipsis.
-func ellipsize(s string, max int) string {
+func ellipsize(s string, maxRunes int) string {
 	r := []rune(s)
-	if len(r) <= max {
+	if len(r) <= maxRunes {
 		return s
 	}
-	return "..." + string(r[len(r)-(max-3):])
+	return "..." + string(r[len(r)-(maxRunes-3):])
 }
 
 // groupCount renders n with thousands separators, e.g. 12304 -> "12,304".

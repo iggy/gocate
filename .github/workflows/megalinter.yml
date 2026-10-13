@@ -8,14 +8,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Mega Linter
-        uses: megalinter/megalinter/flavors/go@v9.4.0
+        uses: megalinter/megalinter/flavors/go@v10.1.0
         env:
           # VALIDATE_ALL_CODEBASE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }} # Validates all source when push on main, else just the git diff with main. Override with true if you always want to lint all sources
           VALIDATE_ALL_CODEBASE: true
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DISABLE_LINTERS: SPELL_CSPELL
           # GO_GOLANGCI_LINT_CLI_LINT_MODE: project
-          GO_REVIVE_CLI_LINT_MODE: project
+          # revive no longer supports `project` lint mode as of MegaLinter 10
+          GO_REVIVE_CLI_LINT_MODE: list_of_files
           SPELL_LYCHEE_ARGUMENTS: "--offline"  # FIXME this isn't getting passed to lychee for some reason
           MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: AGENTS.md  # machine maintained file

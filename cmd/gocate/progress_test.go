@@ -109,7 +109,7 @@ func TestProgressFinishWritesSummary(t *testing.T) {
 	}
 }
 
-func TestNilProgressIsSilent(t *testing.T) {
+func TestNilProgressIsSilent(_ *testing.T) {
 	var p *progress
 	p.update(index.Progress{Root: "/data"})
 	p.finish("Indexed")

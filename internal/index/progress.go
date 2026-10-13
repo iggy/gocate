@@ -89,7 +89,7 @@ func countEntries(ctx context.Context, root string, trk *tracker) error {
 
 	// Visit the same set of entries as filepath.Walk does, so the total matches
 	// what the run goes on to scan.
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(_ string, _ fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // the real walk reports it; a short total is still useful
 		}

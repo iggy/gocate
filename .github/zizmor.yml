@@ -1,0 +1,23 @@
+---
+# zizmor configuration, read automatically by MegaLinter's ACTION_ZIZMOR linter.
+# https://docs.zizmor.sh/configuration/
+rules:
+  unpinned-uses:
+    config:
+      # zizmor's default policy requires every action pinned to a commit SHA.
+      # Dependabot keeps the action tags in this repo current (see
+      # .github/dependabot.yml), so a tag pin is the policy here. "ref-pin"
+      # still rejects a `uses:` clause with no reference at all.
+      policies:
+        "*": ref-pin
+  archived-uses:
+    ignore:
+      # actions/create-release and actions/upload-release-asset are archived.
+      # They are already marked as a TODO in release.yml, which needs its own
+      # rewrite; tracked separately from the linter setup.
+      - release.yml
+  cache-poisoning:
+    ignore:
+      # The only cache-enabled action left is actions/setup-go in the
+      # tag-triggered release job, which cannot be reached from a fork.
+      - release.yml

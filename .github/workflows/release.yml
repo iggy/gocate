@@ -18,6 +18,8 @@ jobs:
 
       - name: Check out code into the Go module directory
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Get build-release dependencies
         run: |
