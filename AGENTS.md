@@ -20,7 +20,7 @@ There is no Makefile. Builds and tests go through `go` directly or `task` (see `
 Three workflows run on every push (`test.yml`, `megalinter.yml`) and on master/PRs (`codeql-analysis.yml`):
 
 - **Test**: `go test ./...` on Ubuntu, Go version pinned from `go.mod` (currently `go 1.25.0`), plus `golangci-lint`. A green test run requires both to pass.
-- **Megalinter** (Go flavor): `DISABLE_LINTERS: SPELL_CSPELL`, `GO_REVIVE_CLI_LINT_MODE: project`. `jscpd` (copy-paste detection) is configured via `.jscpd.json` to **ignore `*_test.go`** — do not be alarmed by similar test helpers across packages.
+- **Megalinter** (Go flavor): `DISABLE_LINTERS: SPELL_CSPELL`, `GO_REVIVE_CLI_LINT_MODE: list_of_files`. `jscpd` (copy-paste detection) is configured via `.jscpd.json` to **ignore `*_test.go`** — do not be alarmed by similar test helpers across packages. Linter configs the repo maintains but does not consume directly live in `.config/` (`revive.toml`, `osv-scanner.toml`) and are wired up through `*_ARGUMENTS` in the workflow, since those tools only auto-discover their config at the workspace root. `.github/zizmor.yml` is the one exception: zizmor natively discovers it there. MegaLinter 10 removed `project` from revive's supported CLI lint modes, which is why `revive.toml` drops the `package-comments` rule — with a file list (not a package) revive reports every file in a package that is not the one holding the package doc, so the rule is unactionable there. `zizmor` is new in v10 and its unpinned-uses default was tightened to require SHA pins; `.github/zizmor.yml` relaxes that to `ref-pin` because Dependabot keeps the action tags current. Its `ref-confusion` audit needs the GitHub API and 401s inside the container (MegaLinter strips `GITHUB_TOKEN`), hence `ACTION_ZIZMOR_ARGUMENTS: "--no-online-audits"`.
 - **release.yml** uses deprecated `actions/create-release` / `upload-release-asset` (marked TODO in the file) and pins Go 1.18. Touch only if touching releases.
 
 ## Architecture
@@ -93,7 +93,7 @@ Gotchas specific to ql:
 - **Flags**: package-level `flag.Bool`/`flag.String` vars in `main.go` with descriptive names (`updatedbFlag`, `printDupes`, etc.). Access via pointer deref, not assignment.
 - **Indentation**: tabs (Go standard `go fmt`).
 - **No comments beyond doc comments and deliberate `// why` notes** (e.g. the `hash.go` comment explaining it must stay byte-identical to the old implementation). The codebase is otherwise sparse on inline comments.
-- **Doc comments** on every exported identifier — this package passes `revive` in project mode.
+- **Doc comments** on every exported identifier — enforced by `revive`'s `exported` rule (see `revive.toml`, which mirrors revive's default set minus `package-comments`).
 
 ## Testing
 

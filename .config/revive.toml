@@ -1,0 +1,32 @@
+# revive configuration for MegaLinter's GO_REVIVE linter.
+#
+# MegaLinter 10 dropped `project` from revive's supported CLI lint modes, so the
+# workflow runs it over a list of files instead. One consequence: the
+# package-comments rule reports every file in a package that is not the one
+# holding the package doc, because a file list carries no package grouping. The
+# rule is off for that reason alone; everything else is revive's default set.
+severity = "warning"
+confidence = 0.8
+
+[rule.blank-imports]
+[rule.context-as-argument]
+[rule.context-keys-type]
+[rule.dot-imports]
+[rule.empty-block]
+[rule.error-naming]
+[rule.error-return]
+[rule.error-strings]
+[rule.errorf]
+[rule.exported]
+[rule.increment-decrement]
+[rule.indent-error-flow]
+[rule.range]
+[rule.receiver-naming]
+[rule.redefines-builtin-id]
+[rule.superfluous-else]
+[rule.time-naming]
+[rule.unexported-return]
+[rule.unreachable-code]
+[rule.unused-parameter]
+[rule.var-declaration]
+[rule.var-naming]

@@ -8,14 +8,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Mega Linter
-        uses: megalinter/megalinter/flavors/go@v9.4.0
+        uses: megalinter/megalinter/flavors/go@v10.1.0
         env:
           # VALIDATE_ALL_CODEBASE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }} # Validates all source when push on main, else just the git diff with main. Override with true if you always want to lint all sources
           VALIDATE_ALL_CODEBASE: true
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DISABLE_LINTERS: SPELL_CSPELL
           # GO_GOLANGCI_LINT_CLI_LINT_MODE: project
-          GO_REVIVE_CLI_LINT_MODE: project
+          # revive no longer supports `project` lint mode as of MegaLinter 10
+          GO_REVIVE_CLI_LINT_MODE: list_of_files
+          # Linter configs live in .config/ to keep the repo root clean, so they
+          # are passed explicitly instead of relying on workspace discovery.
+          GO_REVIVE_ARGUMENTS: "-config .config/revive.toml"
+          REPOSITORY_OSV_SCANNER_ARGUMENTS: "--config .config/osv-scanner.toml"
+          # ref-confusion resolves action refs through the GitHub API, which fails
+          # with 401 inside the MegaLinter container; the offline audits still run.
+          ACTION_ZIZMOR_ARGUMENTS: "--no-online-audits"
           SPELL_LYCHEE_ARGUMENTS: "--offline"  # FIXME this isn't getting passed to lychee for some reason
           MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: AGENTS.md  # machine maintained file

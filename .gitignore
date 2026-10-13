@@ -2,3 +2,4 @@
 /gocate
 default.pgo
 .vscode/
+megalinter-reports/

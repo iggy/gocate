@@ -1,0 +1,14 @@
+# osv-scanner configuration, read by MegaLinter's REPOSITORY_OSV_SCANNER linter.
+# https://google.github.io/osv-scanner/configuration/
+
+# The `go` directive in go.mod is the minimum language version, not the
+# toolchain gocate is actually built with, so advisories filed against
+# stdlib 1.25.0 are reported even though CI and contributors build with a
+# newer Go. Bumping the directive is a separate decision from the linter
+# setup, so the stdlib pseudo-package is excluded here instead. Everything
+# else in go.mod and go.sum is still scanned.
+[[PackageOverrides]]
+name = "stdlib"
+ecosystem = "Go"
+ignore = true
+reason = "go.mod records a minimum language version, not the build toolchain"
