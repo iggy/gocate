@@ -7,7 +7,7 @@ require (
 	github.com/mattn/go-isatty v0.0.24
 	github.com/rs/zerolog v1.35.1
 	github.com/zeebo/xxh3 v1.1.0
-	modernc.org/ql v1.7.0
+	modernc.org/ql v1.8.0
 )
 
 require (
@@ -17,7 +17,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/twmb/murmur3 v1.1.8 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	modernc.org/b v1.1.0 // indirect
+	modernc.org/b v1.2.0 // indirect
 	modernc.org/db v1.4.0 // indirect
 	modernc.org/file v1.1.4 // indirect
 	modernc.org/fileutil v1.4.0 // indirect
